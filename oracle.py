@@ -32,6 +32,7 @@ load_dotenv()
 
 ORACLE_CHANNEL_ID = os.environ.get("ORACLE_CHANNEL_ID") or "C0ACXJ4RNJ0"
 SLACK_PROCESSED_FILE = os.path.join(os.path.dirname(__file__), "oracle_processed_messages.json")
+LAST_POLL_FILE = os.path.join(os.path.dirname(__file__), "oracle_last_poll_ts.txt")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("oracle")
@@ -209,6 +210,23 @@ Reply with ONLY one of: approve_all, approve_partial, reject, question"""
 # Main polling loop
 # ---------------------------------------------------------------------------
 
+def load_last_poll_ts():
+    """Load the timestamp of the last successful poll. Falls back to 24h ago."""
+    if os.path.exists(LAST_POLL_FILE):
+        try:
+            with open(LAST_POLL_FILE, "r") as f:
+                return f.read().strip()
+        except Exception:
+            pass
+    return str(time.time() - 86400)  # 24 hours ago on first run
+
+
+def save_last_poll_ts():
+    """Save current time as the last poll timestamp."""
+    with open(LAST_POLL_FILE, "w") as f:
+        f.write(str(time.time()))
+
+
 def run_slack_poll():
     """Poll #product-oracle for new messages and follow-ups."""
     processed = load_processed_messages()
@@ -217,17 +235,17 @@ def run_slack_poll():
     if bot_user_id:
         log.info(f"Bot user ID: {bot_user_id}")
 
-    ten_min_ago = str(time.time() - 900)  # 15 minutes — wider window for cron gaps
-    log.info(f"Polling #{ORACLE_CHANNEL_ID} for new messages...")
+    oldest = load_last_poll_ts()
+    log.info(f"Polling #{ORACLE_CHANNEL_ID} for messages since ts={oldest}...")
 
     try:
-        data = slack_get_channel_messages(ORACLE_CHANNEL_ID, oldest=ten_min_ago, limit=20)
+        data = slack_get_channel_messages(ORACLE_CHANNEL_ID, oldest=oldest, limit=50)
     except Exception as e:
         log.error(f"Failed to fetch Slack messages: {e}")
         return
 
     messages = data.get("messages", [])
-    log.info(f"Found {len(messages)} message(s) in the last 10 minutes.")
+    log.info(f"Found {len(messages)} message(s) since last poll.")
 
     # --- Top-level messages ---
     new_queries = []
@@ -463,6 +481,7 @@ Use Slack mrkdwn: single * for bold, > for quotes. NEVER use ** or #.""",
             }
             save_processed_messages(processed)
 
+    save_last_poll_ts()
     log.info("Polling complete.")
 
 

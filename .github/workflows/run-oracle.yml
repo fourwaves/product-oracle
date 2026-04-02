@@ -37,5 +37,5 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add oracle_processed_messages.json
+          git add oracle_processed_messages.json oracle_last_poll_ts.txt
           git diff --cached --quiet || git commit -m "Update processed messages log" && git push || true
