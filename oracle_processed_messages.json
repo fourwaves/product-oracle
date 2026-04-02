@@ -1,1 +1,22 @@
-{}
+{
+  "1775149311.333689": {
+    "status": "error",
+    "error": "No LLM backend available. Set GEMINI_API_KEY.",
+    "date": "2026-04-02T17:19:55.585771"
+  },
+  "1775138866.210489": {
+    "status": "error",
+    "error": "No LLM backend available. Set GEMINI_API_KEY.",
+    "date": "2026-04-02T17:19:55.586134"
+  },
+  "1775138365.210339": {
+    "status": "error",
+    "error": "No LLM backend available. Set GEMINI_API_KEY.",
+    "date": "2026-04-02T17:19:55.586455"
+  },
+  "1775138314.295329": {
+    "status": "error",
+    "error": "No LLM backend available. Set GEMINI_API_KEY.",
+    "date": "2026-04-02T17:19:55.586781"
+  }
+}
