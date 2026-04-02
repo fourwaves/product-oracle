@@ -453,10 +453,17 @@ The outline should be a bullet-pointed structure of what the article should cove
 
 Given the release details and an existing help center article, determine what specific changes should be made.
 
+WRITING STYLE (must match existing articles):
+- Short, straight-to-the-point sentences. No filler or marketing language.
+- Use bullet lists or numbered lists whenever possible instead of paragraphs.
+- Step-by-step instructions for how-to content (1. Go to... 2. Click... 3. Select...).
+- Speak directly to the user ("You can...", "Click...", "Go to...").
+- Keep the tone helpful and professional, not casual or overly friendly.
+
 For each change, specify:
 1. The type: UPDATE (modify existing content), ADD (add a new section), REMOVE (delete outdated content), or SCREENSHOT (recommend adding/updating a screenshot)
 2. The specific location in the article (section title or paragraph reference)
-3. What exactly should be changed — be specific about what text to add, modify, or remove
+3. What exactly should be changed — be specific about what text to add, modify, or remove. Any new text you propose must follow the writing style above.
 4. Why this change is needed
 
 If NO changes are needed for this article, return exactly: NO_CHANGES
@@ -660,7 +667,11 @@ RULES:
 - Preserve the existing HTML structure and formatting exactly
 - Only make the specified changes — do not rewrite unrelated sections
 - Keep the same HTML tags and CSS classes
-- If adding new content, match the style of the existing content
+- If adding new content, match the style of the existing content exactly:
+  * Short, straight-to-the-point sentences. No filler or marketing language.
+  * Use <ul>/<ol> lists whenever possible instead of long paragraphs.
+  * Step-by-step numbered instructions for how-to content.
+  * Speak directly to the user ("You can...", "Click...", "Go to...").
 - Return ONLY the updated HTML body, nothing else"""
 
             user_prompt = (
@@ -696,10 +707,13 @@ RULES:
 
 RULES:
 - Use clean, semantic HTML (h2, h3, p, ul/li, ol/li, b, etc.)
-- Write clear, concise documentation aimed at non-technical event organizers
-- Include practical step-by-step instructions where appropriate
-- Add [SCREENSHOT: description] placeholders where screenshots would help
-- Match the tone of a friendly SaaS help center
+- Short, straight-to-the-point sentences. No filler or marketing language.
+- Use bullet lists (<ul>) or numbered lists (<ol>) whenever possible instead of paragraphs.
+- Step-by-step numbered instructions for how-to content (1. Go to... 2. Click...).
+- Speak directly to the user ("You can...", "Click...", "Go to...").
+- Keep the tone helpful and professional, not casual or overly friendly.
+- Aimed at non-technical event organizers — avoid jargon.
+- Add [SCREENSHOT: description] placeholders where screenshots would help.
 - Return ONLY the HTML body"""
 
             outline = (
