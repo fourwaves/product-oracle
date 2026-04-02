@@ -167,6 +167,7 @@ def post_long_message(channel, text, thread_ts):
 # ---------------------------------------------------------------------------
 
 SKILL_DESCRIPTIONS = """Available skills:
+- insights: Answer product questions using the Fourwaves user insights database. Triggered for any question about user feedback, feature requests, pain points, or product topics.
 - kb_update: Update the Intercom knowledge base (help center articles) based on Notion product release pages. Triggered when the user provides Notion page URLs describing new features or product updates.
 """
 
@@ -179,7 +180,8 @@ def classify_skill(text):
 
 Rules:
 - If the message contains one or more Notion page URLs (notion.so or notion.site) and talks about features released, product updates, or knowledge base updates → return "kb_update"
-- If the message is a system notification, casual chat, or doesn't match any skill → return "none"
+- If the message is a product question, asks about user feedback, feature requests, pain points, what users think, or anything related to user insights → return "insights"
+- If the message is a system notification (e.g., "X was added to the channel"), casual chat, or doesn't match any skill → return "none"
 
 Reply with ONLY the skill name or "none". Nothing else."""
 
@@ -294,6 +296,9 @@ def run_slack_poll():
             if skill == "kb_update":
                 from skills.kb_update import handle_kb_update
                 response = handle_kb_update(text, call_llm)
+            elif skill == "insights":
+                from skills.insights import handle_insights_query
+                response = handle_insights_query(text, call_llm)
             else:
                 response = f"Skill '{skill}' is not yet implemented."
         except Exception as e:
@@ -316,8 +321,10 @@ def run_slack_poll():
             continue
 
         log.info(f"  Skill '{skill}' response posted ({len(response)} chars).")
+        # kb_update needs approval; insights is answered immediately
+        status = "awaiting_approval" if skill == "kb_update" else "answered"
         processed[ts] = {
-            "status": "awaiting_approval",
+            "status": status,
             "skill": skill,
             "query": text[:500],
             "response_length": len(response),
@@ -325,13 +332,13 @@ def run_slack_poll():
         }
         save_processed_messages(processed)
 
-    # --- Follow-up scanning: check threads awaiting approval ---
-    log.info("Scanning threads for follow-up responses...")
+    # --- Follow-up scanning: check active threads ---
+    log.info("Scanning threads for follow-ups...")
 
     now = datetime.now()
     active_threads = []
     for thread_ts, entry in processed.items():
-        if entry.get("status") not in ("awaiting_approval",):
+        if entry.get("status") not in ("awaiting_approval", "answered"):
             continue
         if ":" in thread_ts:
             continue
@@ -342,7 +349,7 @@ def run_slack_poll():
         except (KeyError, ValueError):
             continue
 
-    log.info(f"Found {len(active_threads)} thread(s) awaiting approval.")
+    log.info(f"Found {len(active_threads)} active thread(s) to check.")
 
     for thread_ts, entry in active_threads:
         try:
@@ -397,21 +404,21 @@ def run_slack_poll():
             except Exception:
                 pass
 
-            # Classify the follow-up
-            try:
-                classification = classify_followup(thread_context, followup_text)
-            except Exception as e:
-                log.error(f"  Follow-up classification failed: {e}")
-                processed[followup_key] = {"status": "error", "error": str(e), "date": now.isoformat()}
-                save_processed_messages(processed)
-                continue
-
             skill = entry.get("skill", "")
 
-            if classification.startswith("approve"):
-                log.info(f"  Approval detected ({classification}), executing changes...")
-                try:
-                    if skill == "kb_update":
+            try:
+                if skill == "insights":
+                    # Insights: handle follow-up (context answer or new scan)
+                    from skills.insights import handle_insights_followup
+                    response = handle_insights_followup(thread_context, followup_text, call_llm)
+                    classification = "insights_followup"
+
+                elif skill == "kb_update":
+                    # KB update: classify as approval/rejection/question
+                    classification = classify_followup(thread_context, followup_text)
+
+                    if classification.startswith("approve"):
+                        log.info(f"  Approval detected ({classification}), executing changes...")
                         from skills.kb_update import execute_approved_changes
                         response = execute_approved_changes(
                             entry.get("query", ""),
@@ -420,29 +427,28 @@ def run_slack_poll():
                             thread_context,
                             call_llm,
                         )
+                        processed[thread_ts]["status"] = "completed"
+
+                    elif classification.startswith("reject"):
+                        response = "Got it, changes cancelled. Let me know if you'd like to try again with different instructions."
+                        processed[thread_ts]["status"] = "rejected"
+
                     else:
-                        response = "Skill execution not available."
-                except Exception as e:
-                    log.error(f"  Execution failed: {e}")
-                    response = f"Something went wrong while applying changes: {e}"
-
-                processed[thread_ts]["status"] = "completed"
-
-            elif classification.startswith("reject"):
-                response = "Got it, changes cancelled. Let me know if you'd like to try again with different instructions."
-                processed[thread_ts]["status"] = "rejected"
-
-            else:
-                # question or other — answer from context
-                try:
-                    response = call_llm(
-                        """You are the Fourwaves Oracle. Answer the user's follow-up question based on the thread context.
+                        response = call_llm(
+                            """You are the Fourwaves Oracle. Answer the user's follow-up question based on the thread context.
 Use Slack mrkdwn: single * for bold, > for quotes. NEVER use ** or #.""",
-                        f"Thread:\n{thread_context}\n\nFollow-up:\n{followup_text}",
-                        model_hint="pro",
-                    )
-                except Exception as e:
-                    response = f"Error generating response: {e}"
+                            f"Thread:\n{thread_context}\n\nFollow-up:\n{followup_text}",
+                            model_hint="pro",
+                        )
+                else:
+                    classification = "unknown"
+                    response = "I'm not sure how to handle this follow-up."
+
+            except Exception as e:
+                log.error(f"  Follow-up processing failed: {e}")
+                processed[followup_key] = {"status": "error", "error": str(e), "date": now.isoformat()}
+                save_processed_messages(processed)
+                continue
 
             try:
                 post_long_message(ORACLE_CHANNEL_ID, response, thread_ts=thread_ts)

@@ -3,3 +3,5 @@ __pycache__/
 .env
 .venv/
 *.egg-info/
+oracle_insights_cache.json
+pending_changes.json
