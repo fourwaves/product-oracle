@@ -217,7 +217,7 @@ def run_slack_poll():
     if bot_user_id:
         log.info(f"Bot user ID: {bot_user_id}")
 
-    ten_min_ago = str(time.time() - 600)
+    ten_min_ago = str(time.time() - 900)  # 15 minutes — wider window for cron gaps
     log.info(f"Polling #{ORACLE_CHANNEL_ID} for new messages...")
 
     try:
