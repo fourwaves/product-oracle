@@ -30,7 +30,7 @@ load_dotenv()
 # Config
 # ---------------------------------------------------------------------------
 
-ORACLE_CHANNEL_ID = os.environ.get("ORACLE_CHANNEL_ID", "C0ACXJ4RNJ0")
+ORACLE_CHANNEL_ID = os.environ.get("ORACLE_CHANNEL_ID") or "C0ACXJ4RNJ0"
 SLACK_PROCESSED_FILE = os.path.join(os.path.dirname(__file__), "oracle_processed_messages.json")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
