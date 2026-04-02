@@ -391,12 +391,16 @@ OUTPUT FORMAT (strict Slack mrkdwn):
 Given the release summary and a batch of help center articles, return a JSON array of article IDs that are relevant and likely need updates.
 
 An article is RELEVANT if:
-- It covers a feature or workflow affected by the release
-- It describes functionality that has changed
-- It could benefit from mentioning the new feature
-- It's closely related to the topic area of the release
+- It directly covers the SAME feature or workflow that was changed in this release
+- It describes specific functionality that was modified, added, or removed by this release
+- The article's existing content would be INCORRECT or INCOMPLETE without an update
 
-Be INCLUSIVE — if an article might be relevant, include it. We'll do detailed analysis next.
+An article is NOT relevant if:
+- It merely mentions a related concept but covers a different feature
+- It's in the same general area (e.g., both involve forms) but the release doesn't change what the article describes
+- The connection is only tangential or thematic
+
+Be PRECISE — only include articles whose content is directly affected by the release. Do not include articles just because they share a keyword or general topic. We want quality over quantity.
 
 Return ONLY a JSON array of ID numbers. Example: [123, 456]
 If none are relevant, return: []"""
@@ -426,6 +430,16 @@ If none are relevant, return: []"""
         # Still suggest creating a new article
         new_article_proposal = call_llm_fn(
             """Based on this product release, propose a new help center article.
+
+TITLE FORMAT RULES:
+- Use imperative verb form (e.g., "Generate Badges", "Manage Tracks")
+- Do NOT use gerund form or "How to..." prefix
+- Use Title Case, 3-8 words
+
+DESCRIPTION FORMAT RULES:
+- Start with "This article explains how to..." or "This article explains how you can..."
+- Exactly ONE sentence, ending with a period, 60-120 characters
+
 Return a JSON object with: {"title": "...", "description": "...", "outline": "..."}
 The outline should be a bullet-pointed structure of what the article should cover.""",
             f"Release:\n{release_summary}",
@@ -453,6 +467,8 @@ The outline should be a bullet-pointed structure of what the article should cove
         proposal_prompt = """You are a technical writer updating help center documentation after a product release.
 
 Given the release details and an existing help center article, determine what specific changes should be made.
+
+CRITICAL: Only propose changes that are DIRECTLY related to this article's topic. If the release affects a different feature than what this article covers, return NO_CHANGES. Do NOT propose adding content about tangentially related features.
 
 WRITING STYLE for any new/edited text (must match existing articles):
 - Short, straight-to-the-point sentences. No filler or marketing language.
@@ -504,6 +520,22 @@ A new article is needed if:
 - The release introduces a completely new feature not covered by any existing article
 - The scope of changes is large enough to warrant a standalone article
 - Users would benefit from a dedicated guide
+
+TITLE FORMAT RULES (must follow exactly):
+- Use imperative verb form (e.g., "Generate Badges", "Create Rooms and Assign Them to Sessions", "Manage Tracks")
+- Do NOT use gerund form ("Generating...", "Creating...")
+- Do NOT use "How to..." prefix
+- Use Title Case (capitalize all major words)
+- Keep it concise: 3-8 words
+- Be specific about the object being acted on
+
+DESCRIPTION FORMAT RULES (must follow exactly):
+- Start with "This article explains how to..." or "This article explains how you can..."
+- Write exactly ONE sentence
+- End with a period
+- Target 60-120 characters (roughly 10-20 words)
+- Mention the key action AND its context/purpose
+- Do NOT start with "In this article..." or "Learn how to..."
 
 If a new article is needed, return a JSON object:
 {"needed": true, "title": "...", "description": "...", "outline": "full draft of the article content in plain text with section headers and bullet points — this will be shown in a Slack code block for review"}
@@ -718,7 +750,18 @@ RULES:
         try:
             create_prompt = """Create a help center article in HTML format based on this outline.
 
-RULES:
+TITLE FORMAT RULES (for the article title — must follow exactly):
+- Use imperative verb form (e.g., "Generate Badges", "Create Rooms and Assign Them to Sessions")
+- Do NOT use gerund form ("Generating...") or "How to..." prefix
+- Use Title Case (capitalize all major words)
+- Keep it concise: 3-8 words
+
+DESCRIPTION FORMAT RULES (for the short subtitle — must follow exactly):
+- Start with "This article explains how to..." or "This article explains how you can..."
+- Write exactly ONE sentence, ending with a period
+- Target 60-120 characters
+
+CONTENT RULES:
 - Use clean, semantic HTML (h2, h3, p, ul/li, ol/li, b, etc.)
 - Short, straight-to-the-point sentences. No filler or marketing language.
 - Use bullet lists (<ul>) or numbered lists (<ol>) whenever possible instead of paragraphs.
