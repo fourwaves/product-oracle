@@ -358,12 +358,13 @@ def handle_kb_update(message_text, call_llm_fn):
     # 3. Understand the release scope (from QA Notes only)
     release_summary_prompt = """You are reading QA Notes from product feature pages. These notes describe what was built and how the feature works.
 
-Analyze the QA Notes and create a clear summary of:
-1. What new features or changes were released
-2. What functionality they add or modify — describe the user-facing behavior
-3. Key details a technical writer would need to update help center documentation
+Create a concise bullet-point summary of the key features and changes released. Each bullet should be one clear sentence.
 
-Be specific and thorough. This summary will be used to identify which help center articles need updating."""
+OUTPUT FORMAT (strict Slack mrkdwn):
+- Use single * for bold (*bold*). NEVER use ** or ## or ### or any markdown headers.
+- Use plain - for bullet points.
+- Keep it to one section: a flat bullet list of key changes. No sub-sections, no numbered lists, no headers.
+- Be specific but concise. Each bullet = one feature or change."""
 
     pages_content = "\n\n===\n\n".join(
         f"PAGE: {p['title']}\n\nQA NOTES:\n{p['content']}" for p in notion_pages
@@ -453,22 +454,34 @@ The outline should be a bullet-pointed structure of what the article should cove
 
 Given the release details and an existing help center article, determine what specific changes should be made.
 
-WRITING STYLE (must match existing articles):
+WRITING STYLE for any new/edited text (must match existing articles):
 - Short, straight-to-the-point sentences. No filler or marketing language.
 - Use bullet lists or numbered lists whenever possible instead of paragraphs.
 - Step-by-step instructions for how-to content (1. Go to... 2. Click... 3. Select...).
 - Speak directly to the user ("You can...", "Click...", "Go to...").
 - Keep the tone helpful and professional, not casual or overly friendly.
 
-For each change, specify:
-1. The type: UPDATE (modify existing content), ADD (add a new section), REMOVE (delete outdated content), or SCREENSHOT (recommend adding/updating a screenshot)
-2. The specific location in the article (section title or paragraph reference)
-3. What exactly should be changed — be specific about what text to add, modify, or remove. Any new text you propose must follow the writing style above.
-4. Why this change is needed
-
 If NO changes are needed for this article, return exactly: NO_CHANGES
 
-Format your response as a numbered list of changes. Be specific and actionable."""
+OUTPUT FORMAT (strict Slack mrkdwn — this will be posted in Slack):
+For each change, use this exact format:
+
+*[UPDATE/ADD/REMOVE/SCREENSHOT]* — Section: "section name"
+Why: one sentence explaining why
+```Before:
+exact current text that will be changed```
+```After:
+exact new text that will replace it```
+
+For ADD changes (new content), only show an "After" block.
+For REMOVE changes (deleted content), only show a "Before" block.
+For SCREENSHOT changes, just describe what screenshot to add/update.
+
+IMPORTANT:
+- Use single * for bold. NEVER use ** or ## or ### or markdown headers.
+- The Before/After blocks MUST contain the actual text, not a description of it.
+- Use ``` for code blocks (triple backtick). These render as distinct blocks in Slack.
+- Number each change (1. 2. 3.)"""
 
         user_prompt = f"RELEASE SUMMARY:\n{release_summary}\n\n{article_detail}"
 
@@ -493,7 +506,7 @@ A new article is needed if:
 - Users would benefit from a dedicated guide
 
 If a new article is needed, return a JSON object:
-{"needed": true, "title": "...", "description": "...", "outline": "bullet-pointed structure"}
+{"needed": true, "title": "...", "description": "...", "outline": "full draft of the article content in plain text with section headers and bullet points — this will be shown in a Slack code block for review"}
 
 If NOT needed, return: {"needed": false}"""
 
@@ -539,25 +552,25 @@ def format_proposal_message(proposals, new_article_plan, total_articles, notion_
     # Feature summary from QA Notes — serves as validation
     parts.append("*FEATURE SUMMARY (from QA Notes):*\n")
     parts.append(release_summary)
-    parts.append("\n---\n")
 
     feature_names = ", ".join(p["title"] for p in notion_pages)
-    parts.append(f"I've analyzed the release ({feature_names}) against all {total_articles} published help center articles.\n")
+    parts.append(f"\n_Scanned {total_articles} published help center articles for: {feature_names}_\n")
 
     if proposals:
         parts.append(f"*ARTICLES TO UPDATE ({len(proposals)}):*\n")
 
         for i, p in enumerate(proposals, 1):
             parts.append(f"*{i}. {p['article_title']}*")
-            parts.append(f"   {p['article_url']}\n")
+            parts.append(f"    {p['article_url']}")
             parts.append(p["changes"])
-            parts.append("")  # blank line
+            parts.append("")
 
     if new_article_plan:
-        parts.append("\n*NEW ARTICLE RECOMMENDED:*\n")
+        parts.append("*NEW ARTICLE RECOMMENDED:*\n")
         parts.append(f"*Title:* {new_article_plan.get('title', 'TBD')}")
-        parts.append(f"*Description:* {new_article_plan.get('description', '')}")
-        parts.append(f"*Outline:*\n{new_article_plan.get('outline', '')}")
+        parts.append(f"*Description:* {new_article_plan.get('description', '')}\n")
+        outline = new_article_plan.get("outline", "")
+        parts.append(f"```{outline}```")
         parts.append("")
 
     if not proposals and not new_article_plan:
