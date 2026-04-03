@@ -68,15 +68,17 @@ def call_llm(system_prompt, user_prompt, model_hint="flash"):
 # Slack helpers
 # ---------------------------------------------------------------------------
 
-def slack_api(method, **kwargs):
+def slack_api(method, http_method="POST", **kwargs):
     token = os.environ.get("SLACK_BOT_TOKEN", "")
     if not token:
         raise RuntimeError("SLACK_BOT_TOKEN not set.")
-    resp = requests.post(
-        f"https://slack.com/api/{method}",
-        headers={"Authorization": f"Bearer {token}"},
-        json=kwargs,
-    )
+    url = f"https://slack.com/api/{method}"
+    headers = {"Authorization": f"Bearer {token}"}
+    if http_method == "GET":
+        resp = requests.get(url, headers=headers, params=kwargs)
+    else:
+        headers["Content-Type"] = "application/json; charset=utf-8"
+        resp = requests.post(url, headers=headers, json=kwargs)
     resp.raise_for_status()
     data = resp.json()
     if not data.get("ok"):
@@ -103,17 +105,17 @@ def slack_get_channel_messages(channel, oldest=None, limit=20):
     kwargs = {"channel": channel, "limit": limit}
     if oldest:
         kwargs["oldest"] = oldest
-    return slack_api("conversations.history", **kwargs)
+    return slack_api("conversations.history", http_method="GET", **kwargs)
 
 
 def slack_get_thread_replies(channel, ts, limit=100):
-    data = slack_api("conversations.replies", channel=channel, ts=ts, limit=limit)
+    data = slack_api("conversations.replies", http_method="GET", channel=channel, ts=ts, limit=limit)
     return data.get("messages", [])
 
 
 def get_bot_user_id():
     try:
-        data = slack_api("auth.test")
+        data = slack_api("auth.test", http_method="GET")
         return data.get("user_id", "")
     except Exception:
         return ""
