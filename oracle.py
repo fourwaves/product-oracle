@@ -105,7 +105,17 @@ def slack_get_channel_messages(channel, oldest=None, limit=20):
     kwargs = {"channel": channel, "limit": limit}
     if oldest:
         kwargs["oldest"] = oldest
-    return slack_api("conversations.history", http_method="GET", **kwargs)
+    data = slack_api("conversations.history", http_method="GET", **kwargs)
+    if not data.get("messages"):
+        # Debug: retry with POST to check if GET is the issue
+        log.warning(f"GET returned 0 messages, retrying with POST (oldest={oldest})...")
+        data_post = slack_api("conversations.history", **kwargs)
+        if data_post.get("messages"):
+            log.warning(f"POST returned {len(data_post['messages'])} messages! GET method is broken.")
+            return data_post
+        else:
+            log.info(f"POST also returned 0 messages. Channel is genuinely empty since ts={oldest}.")
+    return data
 
 
 def slack_get_thread_replies(channel, ts, limit=100):
