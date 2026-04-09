@@ -93,5 +93,12 @@
     "thread_ts": "1775668303.842829",
     "text": "Are you able to scan all the call trancripts and find what are the summary of the reasons why someone would choose fourwaves and not choose OpenConf ?",
     "date": "2026-04-08T18:45:12.511218"
+  },
+  "1775762336.787779": {
+    "status": "active",
+    "skill": "insights",
+    "query": "Find all user insights related to scheduling or automating email sending.\nFocus on cases where:\n\u2022 The recipient list can change between setup and send time\n\u2022 Users expect the list to update automatically (e.g. new registrations, status changes)\n\u2022 Users faced issues with outdated or static recipient lists\nFor each insight, extract:\n\u2022 Context\n\u2022 Problem / need\n\u2022 Whether timing or data changes caused the issue\nSummarize:\n\u2022 Key patterns\n\u2022 Frequency of the need\n\u2022 Impact on users\n\u2022 Conclusion: Do we ne",
+    "response_length": 31826,
+    "date": "2026-04-09T19:48:08.906581"
   }
 }
