@@ -101,11 +101,26 @@ def slack_join_channel(channel):
         log.warning(f"Could not join channel {channel}: {e}")
 
 
-def slack_get_channel_messages(channel, oldest=None, limit=20):
-    kwargs = {"channel": channel, "limit": limit}
-    if oldest:
-        kwargs["oldest"] = oldest
-    return slack_api("conversations.history", http_method="GET", **kwargs)
+def slack_get_channel_messages(channel, oldest=None, limit=200):
+    """Fetch channel messages with automatic pagination to get ALL messages since oldest."""
+    all_messages = []
+    cursor = None
+    while True:
+        kwargs = {"channel": channel, "limit": limit}
+        if oldest:
+            kwargs["oldest"] = oldest
+        if cursor:
+            kwargs["cursor"] = cursor
+        data = slack_api("conversations.history", http_method="GET", **kwargs)
+        messages = data.get("messages", [])
+        all_messages.extend(messages)
+        # Check for more pages
+        next_cursor = data.get("response_metadata", {}).get("next_cursor", "")
+        if not next_cursor or not data.get("has_more"):
+            break
+        cursor = next_cursor
+        log.info(f"  Fetching next page (have {len(all_messages)} messages so far)...")
+    return {"messages": all_messages, "ok": True}
 
 
 def slack_get_thread_replies(channel, ts, limit=100):
@@ -256,20 +271,34 @@ Reply with ONLY one of: approve, revise, reject, followup"""
 # ---------------------------------------------------------------------------
 
 def load_last_poll_ts():
-    """Load the timestamp of the last successful poll. Falls back to 24h ago."""
+    """Load the timestamp of the last successful poll. Falls back to 24h ago.
+
+    Includes a safety check: if the stored timestamp is more than 7 days old
+    or in the future, reset to 24h ago to prevent stuck polls.
+    """
+    fallback = str(time.time() - 86400)
     if os.path.exists(LAST_POLL_FILE):
         try:
             with open(LAST_POLL_FILE, "r") as f:
-                return f.read().strip()
+                ts_str = f.read().strip()
+            ts_val = float(ts_str)
+            now = time.time()
+            if ts_val > now + 60:
+                log.warning(f"Poll timestamp {ts_val} is in the future! Resetting to 24h ago.")
+                return fallback
+            if now - ts_val > 7 * 86400:
+                log.warning(f"Poll timestamp {ts_val} is >7 days old. Resetting to 24h ago.")
+                return fallback
+            return ts_str
         except Exception:
             pass
-    return str(time.time() - 86400)  # 24 hours ago on first run
+    return fallback
 
 
-def save_last_poll_ts(ts=None):
-    """Save the last poll timestamp. Uses current time if no ts provided."""
+def save_last_poll_ts(ts):
+    """Save the last poll timestamp. Requires an explicit timestamp."""
     with open(LAST_POLL_FILE, "w") as f:
-        f.write(str(ts or time.time()))
+        f.write(str(ts))
 
 
 def run_slack_poll():
@@ -284,15 +313,13 @@ def run_slack_poll():
     log.info(f"Polling #{ORACLE_CHANNEL_ID} for messages since ts={oldest}...")
 
     try:
-        data = slack_get_channel_messages(ORACLE_CHANNEL_ID, oldest=oldest, limit=50)
+        data = slack_get_channel_messages(ORACLE_CHANNEL_ID, oldest=oldest)
     except Exception as e:
         log.error(f"Failed to fetch Slack messages: {e}")
         return
 
     messages = data.get("messages", [])
     log.info(f"Found {len(messages)} raw message(s) from Slack API since ts={oldest}.")
-    if data.get("has_more"):
-        log.info(f"  Slack indicates has_more=True (pagination needed).")
 
     # Debug: log each raw message
     for m in messages:
