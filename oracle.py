@@ -290,20 +290,35 @@ def run_slack_poll():
         return
 
     messages = data.get("messages", [])
-    log.info(f"Found {len(messages)} message(s) since last poll.")
+    log.info(f"Found {len(messages)} raw message(s) from Slack API since ts={oldest}.")
+    if data.get("has_more"):
+        log.info(f"  Slack indicates has_more=True (pagination needed).")
+
+    # Debug: log each raw message
+    for m in messages:
+        mts = m.get("ts", "?")
+        muser = m.get("user", m.get("bot_id", "?"))
+        mtype = m.get("subtype", "normal")
+        mthread = m.get("thread_ts", "")
+        mtext = (m.get("text") or "")[:80]
+        log.info(f"  RAW msg ts={mts} user={muser} subtype={mtype} thread_ts={mthread} text={mtext!r}")
 
     # --- Top-level messages ---
     new_queries = []
     for msg in messages:
         ts = msg.get("ts", "")
         if ts in processed and processed[ts].get("status") != "error":
+            log.info(f"  SKIP {ts}: already processed (status={processed[ts].get('status')})")
             continue
         if msg.get("bot_id") or msg.get("subtype"):
+            log.info(f"  SKIP {ts}: bot_id={msg.get('bot_id')} subtype={msg.get('subtype')}")
             continue
         if msg.get("thread_ts") and msg.get("thread_ts") != ts:
+            log.info(f"  SKIP {ts}: thread reply (thread_ts={msg.get('thread_ts')})")
             continue
         text = msg.get("text", "").strip()
         if not text:
+            log.info(f"  SKIP {ts}: empty text")
             continue
         new_queries.append((ts, text, msg.get("user", "")))
 
