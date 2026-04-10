@@ -569,7 +569,9 @@ Use Slack mrkdwn: single * for bold, > for quotes. NEVER use ** or #.""",
             processed[thread_ts]["date"] = now.isoformat()
             save_processed_messages(processed)
 
-    # Advance poll timestamp, but not past any errored messages (so they get retried)
+    # Advance poll timestamp based on what Slack actually returned.
+    # CRITICAL: never advance past messages we haven't seen. If Slack returned
+    # 0 messages (transient issue), keep the old timestamp so we retry next run.
     error_timestamps = [
         float(ts) for ts, entry in processed.items()
         if entry.get("status") == "error" and ":" not in ts
@@ -578,8 +580,14 @@ Use Slack mrkdwn: single * for bold, > for quotes. NEVER use ** or #.""",
         # Set poll to just before the oldest error so it gets re-fetched
         save_last_poll_ts(min(error_timestamps) - 1)
         log.info(f"Poll timestamp set before oldest error for retry.")
+    elif messages:
+        # Advance to the latest message timestamp we actually received
+        latest_msg_ts = max(float(m.get("ts", 0)) for m in messages)
+        save_last_poll_ts(latest_msg_ts)
+        log.info(f"Poll timestamp advanced to latest message: {latest_msg_ts}")
     else:
-        save_last_poll_ts()
+        # No messages returned — don't advance, keep old timestamp
+        log.info(f"No messages returned, keeping poll timestamp at {oldest}")
     log.info("Polling complete.")
 
 
