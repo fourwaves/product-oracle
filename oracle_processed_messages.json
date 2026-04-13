@@ -128,5 +128,12 @@
     "query": "Find user insights talking about wanting the ability to add anchor links to a content block on their website pages.",
     "response_length": 1731,
     "date": "2026-04-10T17:54:30.222325"
+  },
+  "1776094071.360529": {
+    "status": "active",
+    "skill": "transcripts",
+    "query": "Give me everything mentioned in the call transcripts about ConfTool.",
+    "response_length": 699,
+    "date": "2026-04-13T15:38:25.665721"
   }
 }
