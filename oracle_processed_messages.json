@@ -135,5 +135,12 @@
     "query": "Give me everything mentioned in the call transcripts about ConfTool.",
     "response_length": 699,
     "date": "2026-04-13T15:38:25.665721"
+  },
+  "1776193496.121989": {
+    "status": "active",
+    "skill": "insights",
+    "query": "We\u2019re introducing an email automation feature that allows an organizer to define an email which will be sent on a specific date/time or when a specific trigger-event occurs. They will also be able to select the recipients using filters. We already have a list of trigger-events (below). I want you to find all the users insights that talk about needing automated emails AND that mention a specific trigger-event that is NOT already in the list below. My goal is to add new triggers to address those u",
+    "response_length": 8207,
+    "date": "2026-04-14T19:10:15.193208"
   }
 }
