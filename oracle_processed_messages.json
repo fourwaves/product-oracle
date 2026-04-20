@@ -163,5 +163,12 @@
     "query": "Pull the insights about form entries (submissions or registrations) that were deleted by mistakes or have to be restored.",
     "response_length": 93,
     "date": "2026-04-20T19:28:23.788415"
+  },
+  "1776723367.998749": {
+    "status": "active",
+    "skill": "insights",
+    "query": "Pull the insights about form entries (submissions or registrations) that were deleted by mistakes or have to be restored.",
+    "response_length": 672,
+    "date": "2026-04-20T22:27:52.998867"
   }
 }
