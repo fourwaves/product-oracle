@@ -170,5 +170,10 @@
     "query": "Pull the insights about form entries (submissions or registrations) that were deleted by mistakes or have to be restored.",
     "response_length": 672,
     "date": "2026-04-20T22:27:52.998867"
+  },
+  "1776960301.007019": {
+    "status": "error",
+    "error": "429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'Resource exhausted. Please try again later. Please refer to https://cloud.google.com/vertex-ai/generative-ai/docs/error-code-429 for more details.', 'status': 'RESOURCE_EXHAUSTED'}}",
+    "date": "2026-04-23T16:35:58.518727"
   }
 }
