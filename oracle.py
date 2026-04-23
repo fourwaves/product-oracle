@@ -82,7 +82,7 @@ def call_llm(system_prompt, user_prompt, model_hint="flash", max_attempts=4):
         raise RuntimeError("No LLM backend available. Set GEMINI_API_KEY.")
 
     client = genai.Client(api_key=gemini_key)
-    model = "gemini-2.0-flash" if model_hint == "flash" else "gemini-2.5-flash"
+    model = "gemini-2.5-flash"  # model_hint reserved for future pro-model routing
 
     last_exc = None
     for attempt in range(1, max_attempts + 1):
