@@ -499,23 +499,31 @@ WRITING STYLE for any new/edited text (must match existing articles):
 If NO changes are needed for this article, return exactly: NO_CHANGES
 
 OUTPUT FORMAT (strict Slack mrkdwn — this will be posted in Slack):
-For each change, use this exact format:
+For each change, use this EXACT format, including the blank lines:
 
 *[UPDATE/ADD/REMOVE/SCREENSHOT]* — Section: "section name"
 Why: one sentence explaining why
-```Before:
-exact current text that will be changed```
-```After:
-exact new text that will replace it```
 
-For ADD changes (new content), only show an "After" block.
-For REMOVE changes (deleted content), only show a "Before" block.
-For SCREENSHOT changes, just describe what screenshot to add/update.
+*Before:*
+```
+exact current text that will be changed
+```
 
-IMPORTANT:
+*After:*
+```
+exact new text that will replace it
+```
+
+For ADD changes (new content), only show the *After:* block.
+For REMOVE changes (deleted content), only show the *Before:* block.
+For SCREENSHOT changes, just describe what screenshot to add/update (no code blocks).
+
+CRITICAL FORMATTING RULES (Slack mrkdwn is fragile):
+- Triple backticks (```) MUST be on their own line — never on the same line as content, never immediately after the word "Before:" or "After:".
+- There MUST be a blank line between a closing ``` and the next *Before:*/*After:* label, AND a blank line between changes.
+- The *Before:* and *After:* labels go OUTSIDE the code block, as bold text on their own line.
 - Use single * for bold. NEVER use ** or ## or ### or markdown headers.
-- The Before/After blocks MUST contain the actual text, not a description of it.
-- Use ``` for code blocks (triple backtick). These render as distinct blocks in Slack.
+- The code blocks MUST contain the actual text, not a description of it.
 - Number each change (1. 2. 3.)"""
 
         user_prompt = f"RELEASE SUMMARY:\n{release_summary}\n\n{article_detail}"
@@ -660,11 +668,26 @@ WRITING STYLE for any new/edited text (must match existing Fourwaves help center
 
 OUTPUT FORMAT (strict Slack mrkdwn — this will be posted in Slack):
 - Use single * for bold (*bold*). NEVER use ** or ## or ### or markdown headers.
-- Use ``` for code blocks (triple backtick) for Before/After text blocks.
 - Number each change (1. 2. 3.)
-- For each change use: *[UPDATE/ADD/REMOVE/SCREENSHOT]* — Section: "section name"
-  Why: one sentence
-  ```Before: ...``` and ```After: ...```
+- For each change use EXACTLY this format, including the blank lines:
+
+*[UPDATE/ADD/REMOVE/SCREENSHOT]* — Section: "section name"
+Why: one sentence explaining why
+
+*Before:*
+```
+exact current text that will be changed
+```
+
+*After:*
+```
+exact new text that will replace it
+```
+
+CRITICAL FORMATTING RULES (Slack mrkdwn is fragile):
+- Triple backticks (```) MUST be on their own line — never on the same line as content, never immediately after the word "Before:" or "After:".
+- There MUST be a blank line between a closing ``` and the next *Before:*/*After:* label, AND a blank line between changes.
+- The *Before:* and *After:* labels go OUTSIDE the code block, as bold text on their own line.
 
 End with:
 ---
