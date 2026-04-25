@@ -75,20 +75,29 @@ def strip_code_fences(text):
     return text
 
 
-def render_changes_as_mrkdwn(changes_list):
+def render_changes_as_mrkdwn(changes_list, fr_changes_list=None):
     """Render a list of change dicts as Slack mrkdwn, deterministically.
 
     Each change dict has: type, section, why, before, after, screenshot_description.
     Only 'type' is required; other fields are used when present.
+
+    If fr_changes_list is provided (matching length and order), each Before/After
+    block is shown in both English and French so the user can validate both
+    versions before approving.
     """
     if not changes_list:
         return ""
+
+    has_fr = bool(fr_changes_list) and len(fr_changes_list) == len(changes_list)
+    before_label = "*Before (EN):*" if has_fr else "*Before:*"
+    after_label = "*After (EN):*" if has_fr else "*After:*"
 
     parts = []
     for i, change in enumerate(changes_list, 1):
         type_ = str(change.get("type", "UPDATE")).upper()
         section = change.get("section", "")
         why = change.get("why", "")
+        change_fr = fr_changes_list[i - 1] if has_fr else None
 
         header = f"{i}. *[{type_}]*"
         if section:
@@ -105,18 +114,33 @@ def render_changes_as_mrkdwn(changes_list):
         else:
             before = (change.get("before") or "").strip()
             after = (change.get("after") or "").strip()
+            before_fr = ((change_fr or {}).get("before") or "").strip()
+            after_fr = ((change_fr or {}).get("after") or "").strip()
+
             if before:
                 parts.append("")
-                parts.append("*Before:*")
+                parts.append(before_label)
                 parts.append("```")
                 parts.append(before)
                 parts.append("```")
+                if before_fr:
+                    parts.append("")
+                    parts.append("*Before (FR):*")
+                    parts.append("```")
+                    parts.append(before_fr)
+                    parts.append("```")
             if after:
                 parts.append("")
-                parts.append("*After:*")
+                parts.append(after_label)
                 parts.append("```")
                 parts.append(after)
                 parts.append("```")
+                if after_fr:
+                    parts.append("")
+                    parts.append("*After (FR):*")
+                    parts.append("```")
+                    parts.append(after_fr)
+                    parts.append("```")
 
         parts.append("")  # blank line between changes
 
@@ -375,6 +399,123 @@ def create_intercom_article(title, body, description="", parent_id=None, parent_
     return resp.json()
 
 
+def fetch_intercom_article_full(article_id):
+    """Fetch a single article (includes translated_content)."""
+    resp = requests.get(
+        f"https://api.intercom.io/articles/{article_id}",
+        headers=INTERCOM_HEADERS,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def get_article_fr_body(article):
+    """Return the French body of an Intercom article, or empty string."""
+    return ((article.get("translated_content") or {}).get("fr") or {}).get("body", "")
+
+
+def translate_changes_to_fr(article, changes_list_en, call_llm_fn):
+    """Translate a list of English KB change proposals into matching French ones.
+
+    Looks at the article's French body to find verbatim 'before' text and
+    translates 'after' text naturally. Returns a list with the same length and
+    order as changes_list_en, or None if the article has no French version.
+    """
+    fr_body = get_article_fr_body(article)
+    if not fr_body or not changes_list_en:
+        return None
+
+    fr_text = html_to_text(fr_body)[:4000]
+
+    system_prompt = """You are translating help center change proposals from English to French.
+
+You are given:
+1. A list of English change proposals for an article (each has type, section, why, before, after).
+2. The current French version of the article body.
+
+For each English change, produce the equivalent French change as a JSON object.
+
+RULES:
+- Output a JSON array with the SAME length and SAME order as the input.
+- For UPDATE/REMOVE: "before" must be the EXACT existing French text from the article that will be replaced — find and copy it verbatim from the French body. Do not paraphrase.
+- For UPDATE/ADD: "after" is the natural French translation of the new English text (not word-for-word).
+- Translate "section" to its French equivalent if a corresponding section exists in the French article; otherwise keep the English section name.
+- Translate "why" to French.
+- Translate UI labels using their French equivalents in the Fourwaves app (e.g., "Subject" → "Sujet", "Save and continue" → "Sauvegarder et continuer").
+- Use "vous" form (formal).
+- Présent, état actuel uniquement. N'utilisez PAS « désormais », « maintenant », « a été mis à jour », « récemment », « dorénavant », ni aucune formulation qui évoque un changement par rapport à un état antérieur.
+- Each change object has the same fields as input: {type, section, why, before, after, screenshot_description}.
+- For ADD: "before" can be empty string. For REMOVE: "after" can be empty string. For SCREENSHOT: include "screenshot_description" only.
+- Return ONLY the JSON array, no prose, no code fences."""
+
+    user_prompt = (
+        f"ENGLISH CHANGES (JSON):\n{json.dumps(changes_list_en, ensure_ascii=False)}\n\n"
+        f"CURRENT FRENCH ARTICLE BODY (plain text, for finding verbatim 'before' text):\n{fr_text}"
+    )
+
+    try:
+        raw = call_llm_fn(system_prompt, user_prompt, model_hint="pro")
+        cleaned = strip_code_fences(raw)
+        fr_list = json.loads(cleaned)
+        if isinstance(fr_list, list) and len(fr_list) == len(changes_list_en):
+            return fr_list
+        log.warning(
+            f"FR translation length mismatch for article {article.get('id')}: "
+            f"got {len(fr_list) if isinstance(fr_list, list) else 'non-list'}, "
+            f"expected {len(changes_list_en)}."
+        )
+    except json.JSONDecodeError as e:
+        log.warning(f"FR translation JSON parse failed for article {article.get('id')}: {e}")
+    except Exception as e:
+        log.warning(f"FR translation failed for article {article.get('id')}: {e}")
+    return None
+
+
+def translate_new_article_proposal_to_fr(en_plan, call_llm_fn):
+    """Translate a new-article proposal (title/description/outline) to French.
+
+    Returns a dict with 'title', 'description', 'outline' in French, or None.
+    """
+    if not en_plan:
+        return None
+
+    system_prompt = """Translate this help center new-article proposal from English to French.
+
+Return a JSON object: {"title": "...", "description": "...", "outline": "..."}
+
+RULES:
+- Naturally translate, not word-for-word.
+- Use "vous" form (formal).
+- Translate UI labels using their French equivalents in the Fourwaves app.
+- TITLE: imperative verb form in French, sentence case, 3-8 words.
+- DESCRIPTION: start with "Cet article explique comment..." — one sentence, period at end.
+- OUTLINE: keep the same structure (section headers + bullets) as the English outline, translated naturally.
+- Présent, état actuel uniquement. N'utilisez PAS « désormais », « maintenant », « a été ajouté », « récemment », « nouvelle fonctionnalité », « dorénavant ».
+- Return ONLY the JSON object, no prose, no code fences."""
+
+    user_prompt = (
+        f"ENGLISH TITLE: {en_plan.get('title', '')}\n"
+        f"ENGLISH DESCRIPTION: {en_plan.get('description', '')}\n"
+        f"ENGLISH OUTLINE:\n{en_plan.get('outline', '')}"
+    )
+
+    try:
+        raw = call_llm_fn(system_prompt, user_prompt, model_hint="pro")
+        cleaned = strip_code_fences(raw)
+        data = json.loads(cleaned)
+        if isinstance(data, dict):
+            return {
+                "title": data.get("title", ""),
+                "description": data.get("description", ""),
+                "outline": data.get("outline", ""),
+            }
+    except json.JSONDecodeError as e:
+        log.warning(f"FR new-article JSON parse failed: {e}")
+    except Exception as e:
+        log.warning(f"FR new-article translation failed: {e}")
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Skill handler: propose KB changes
 # ---------------------------------------------------------------------------
@@ -516,7 +657,7 @@ The outline should be a bullet-pointed structure of what the article should cove
         return (
             f"I scanned all {len(published)} published help center articles and none seem directly affected by this release.\n\n"
             f"However, I recommend *creating a new article*:\n\n{new_article_proposal}\n\n"
-            f"Reply with *yes, proceed* to create the article as a draft, or tell me what to adjust."
+            f"Reply with *yes, proceed* to create and publish the article, or tell me what to adjust."
         )
 
     # 6. Detailed analysis: for each relevant article, determine exact changes
@@ -597,12 +738,23 @@ Example output:
                 log.warning(f"Article {article['id']}: proposal was not a JSON list, skipping.")
                 continue
             if changes_list:
+                # Generate French versions of the changes for bilingual review.
+                # Re-fetch the article if translated_content isn't already populated.
+                article_for_fr = article
+                if not get_article_fr_body(article):
+                    try:
+                        article_for_fr = fetch_intercom_article_full(article["id"])
+                    except Exception as e:
+                        log.warning(f"Couldn't fetch full article {article['id']} for FR: {e}")
+                fr_changes_list = translate_changes_to_fr(article_for_fr, changes_list, call_llm_fn)
+
                 detailed_proposals.append({
                     "article_id": str(article["id"]),
                     "article_title": article["title"],
                     "article_url": article.get("url", ""),
                     "changes_list": changes_list,
-                    "changes": render_changes_as_mrkdwn(changes_list),
+                    "fr_changes_list": fr_changes_list,
+                    "changes": render_changes_as_mrkdwn(changes_list, fr_changes_list),
                 })
         except json.JSONDecodeError as e:
             log.warning(f"Failed to parse proposal JSON for article {article['id']}: {e}. Raw: {raw[:300]!r}")
@@ -665,6 +817,14 @@ If NOT needed, return: {"needed": false}"""
     except (json.JSONDecodeError, AttributeError):
         pass
 
+    # Translate the new-article proposal to French for bilingual review.
+    if new_article_plan:
+        fr_plan = translate_new_article_proposal_to_fr(new_article_plan, call_llm_fn)
+        if fr_plan:
+            new_article_plan["fr_title"] = fr_plan.get("title", "")
+            new_article_plan["fr_description"] = fr_plan.get("description", "")
+            new_article_plan["fr_outline"] = fr_plan.get("outline", "")
+
     # 8. Format the Slack response
     return format_proposal_message(detailed_proposals, new_article_plan, len(published), notion_pages, release_summary)
 
@@ -682,13 +842,33 @@ def render_proposals_section(proposals, new_article_plan):
             parts.append("")
 
     if new_article_plan:
+        has_fr = bool(new_article_plan.get("fr_title") or new_article_plan.get("fr_outline"))
+        title_label = "*Title (EN):*" if has_fr else "*Title:*"
+        desc_label = "*Description (EN):*" if has_fr else "*Description:*"
+        outline_label = "*Outline (EN):*" if has_fr else None
+
         parts.append("*NEW ARTICLE RECOMMENDED:*\n")
-        parts.append(f"*Title:* {new_article_plan.get('title', 'TBD')}")
-        parts.append(f"*Description:* {new_article_plan.get('description', '')}\n")
+        parts.append(f"{title_label} {new_article_plan.get('title', 'TBD')}")
+        if has_fr:
+            parts.append(f"*Title (FR):* {new_article_plan.get('fr_title', '')}")
+        parts.append(f"{desc_label} {new_article_plan.get('description', '')}")
+        if has_fr:
+            parts.append(f"*Description (FR):* {new_article_plan.get('fr_description', '')}")
+        parts.append("")
+
         outline = (new_article_plan.get("outline") or "").strip()
         if outline:
+            if outline_label:
+                parts.append(outline_label)
             parts.append("```")
             parts.append(outline)
+            parts.append("```")
+        outline_fr = (new_article_plan.get("fr_outline") or "").strip()
+        if outline_fr:
+            parts.append("")
+            parts.append("*Outline (FR):*")
+            parts.append("```")
+            parts.append(outline_fr)
             parts.append("```")
         parts.append("")
     return "\n".join(parts)
@@ -713,7 +893,7 @@ def format_proposal_message(proposals, new_article_plan, total_articles, notion_
         parts.append("After detailed analysis, no changes are needed for any existing articles and no new article is recommended.")
         return "\n".join(parts)
 
-    parts.append("\n_Note: When approved, changes will be applied to both English and French versions of each article._")
+    parts.append("\n_Note: When approved, updates will be applied to both English and French versions, and any new article will be created and published._")
     parts.append("\n---")
     parts.append("You can ask me to revise the proposal, or reply *yes, proceed* to apply the changes.")
 
@@ -763,19 +943,29 @@ OUTPUT FORMAT: Return ONLY a JSON object with this shape. No prose, no markdown,
     {
       "article_title": "exact title of the article",
       "article_url": "url of the article (copy from thread if available, else empty string)",
-      "changes": [
+      "changes_en": [
         {
           "type": "UPDATE" | "ADD" | "REMOVE" | "SCREENSHOT",
           "section": "name of the section in the article",
           "why": "one sentence explaining why this change is needed",
-          "before": "exact current text (REQUIRED for UPDATE and REMOVE; omit or empty for ADD and SCREENSHOT)",
-          "after": "exact new text (REQUIRED for UPDATE and ADD; omit or empty for REMOVE and SCREENSHOT)",
+          "before": "exact current English text (REQUIRED for UPDATE and REMOVE; omit or empty for ADD and SCREENSHOT)",
+          "after": "exact new English text (REQUIRED for UPDATE and ADD; omit or empty for REMOVE and SCREENSHOT)",
           "screenshot_description": "what screenshot to add or update (only for SCREENSHOT type)"
         }
+      ],
+      "changes_fr": [
+        { "same shape as changes_en, but in French. Same length and order. Use null instead of an array if the original thread did not include French versions for this article." }
       ]
     }
   ],
-  "new_article": null | {"title": "...", "description": "...", "outline": "..."}
+  "new_article": null | {
+    "title": "English title",
+    "description": "English description",
+    "outline": "English outline",
+    "fr_title": "French title (or empty string if the thread had no French version)",
+    "fr_description": "French description (or empty string)",
+    "fr_outline": "French outline (or empty string)"
+  }
 }
 
 RULES:
@@ -783,7 +973,8 @@ RULES:
 - Plain text only inside "before" and "after" — no markdown, no code fences, no HTML tags.
 - Keep each change narrowly scoped (one paragraph or one bullet point per change).
 - If an article has no remaining changes after the revision, omit it from "articles".
-- If no new article is needed, set "new_article" to null."""
+- If no new article is needed, set "new_article" to null.
+- For "changes_fr": use natural French (not word-for-word), use "vous" form, translate UI labels using their French equivalents in the Fourwaves app, and apply the same present-tense / current-state rule (no « désormais », « maintenant », « a été mis à jour », etc.). Match length and order with "changes_en". If the original thread did not include French for an article, set "changes_fr" to null."""
 
     raw = call_llm_fn(
         revision_prompt,
@@ -803,14 +994,21 @@ RULES:
 
     revised_proposals = []
     for a in data.get("articles", []) or []:
-        changes_list = a.get("changes", []) or []
+        # Accept both new ("changes_en") and old ("changes") field names for backward compat
+        changes_list = a.get("changes_en") or a.get("changes") or []
         if not changes_list:
             continue
+        fr_changes_list = a.get("changes_fr") or None
+        if not isinstance(fr_changes_list, list):
+            fr_changes_list = None
+        if fr_changes_list and len(fr_changes_list) != len(changes_list):
+            fr_changes_list = None
         revised_proposals.append({
             "article_title": a.get("article_title", ""),
             "article_url": a.get("article_url", ""),
             "changes_list": changes_list,
-            "changes": render_changes_as_mrkdwn(changes_list),
+            "fr_changes_list": fr_changes_list,
+            "changes": render_changes_as_mrkdwn(changes_list, fr_changes_list),
         })
 
     new_article_plan = data.get("new_article") or None
@@ -823,7 +1021,7 @@ RULES:
         parts.append("No changes remain after your revisions. Let me know if you'd like to start over.")
         return "\n".join(parts)
 
-    parts.append("\n_Note: When approved, changes will be applied to both English and French versions of each article._")
+    parts.append("\n_Note: When approved, updates will be applied to both English and French versions, and any new article will be created and published._")
     parts.append("\n---")
     parts.append("You can ask me to revise again, or reply *yes, proceed* to apply the changes.")
     return "\n".join(parts)
@@ -850,7 +1048,10 @@ Return a JSON object:
     {
       "article_title": "...",
       "article_url": "...",
-      "changes_description": "full description of all changes to make to this article"
+      "changes_description": "full plain-text description of all changes to make to this article — include the English Before/After text for each change so a downstream LLM can apply them",
+      "change_summary": [
+        {"type": "UPDATE" | "ADD" | "REMOVE" | "SCREENSHOT", "section": "exact section name"}
+      ]
     }
   ],
   "new_article": null or {
@@ -860,8 +1061,11 @@ Return a JSON object:
   }
 }
 
-If the user's approval message specifies only certain changes to apply (e.g., "only article 1"), include only those.
-Return ONLY the JSON object, nothing else."""
+RULES:
+- "change_summary" must contain ONE entry per change shown in the most recent proposal for that article, in the same order. Use the type (UPDATE / ADD / REMOVE / SCREENSHOT) and the section name shown in the proposal.
+- "changes_description" is the human-readable description used by the next step to actually rewrite the HTML. Keep it complete and unambiguous.
+- If the user's approval message specifies only certain changes to apply (e.g., "only article 1", "only changes 1 and 3"), include only those — and only those entries in change_summary.
+- Return ONLY the JSON object, nothing else."""
 
     raw = call_llm_fn(
         extract_prompt,
@@ -883,6 +1087,7 @@ Return ONLY the JSON object, nothing else."""
     article_updates = pending.get("article_updates", [])
     new_article_plan = pending.get("new_article", None)
 
+    # results: list of dicts with keys kind, title, url, lang_note, items, error
     results = []
 
     # Fetch all articles to resolve titles to IDs
@@ -896,6 +1101,7 @@ Return ONLY the JSON object, nothing else."""
         article_title = update.get("article_title", "")
         article_url = update.get("article_url", "")
         changes_description = update.get("changes_description", "")
+        change_summary = update.get("change_summary", []) or []
 
         # Find article by title (case-insensitive)
         article = articles_by_title.get(article_title.lower())
@@ -907,7 +1113,13 @@ Return ONLY the JSON object, nothing else."""
                     break
 
         if not article:
-            results.append(f"SKIPPED: *{article_title}* — could not find article in Intercom")
+            results.append({
+                "kind": "skipped",
+                "title": article_title,
+                "url": article_url,
+                "items": change_summary,
+                "error": "could not find article in Intercom",
+            })
             continue
 
         article_id = article["id"]
@@ -998,17 +1210,29 @@ RULES:
                     body=new_en_body,
                     translated_content={"fr": {"body": new_fr_body}},
                 )
-                lang_note = " (EN + FR)"
+                lang_note = "EN + FR"
             else:
                 update_intercom_article(article_id, body=new_en_body)
-                lang_note = " (EN only — no French version found)"
+                lang_note = "EN only (no French version found)"
 
-            url = article.get("url", article_url)
-            results.append(f"Updated: *{article_title}*{lang_note}\n   {url}")
+            url = article.get("url") or article_url
+            results.append({
+                "kind": "updated",
+                "title": article_title,
+                "url": url,
+                "lang_note": lang_note,
+                "items": change_summary,
+            })
 
         except Exception as e:
             log.error(f"Failed to update article {article_id}: {e}")
-            results.append(f"FAILED: *{article_title}* — {e}")
+            results.append({
+                "kind": "failed",
+                "title": article_title,
+                "url": article.get("url") or article_url,
+                "items": change_summary,
+                "error": str(e),
+            })
 
     # Create new article
     if new_article_plan:
@@ -1095,21 +1319,83 @@ RULES:
                 title=new_article_plan["title"],
                 body=body_html,
                 description=new_article_plan.get("description", ""),
-                state="draft",
+                state="published",
                 translated_content=translated_content,
             )
             new_url = result.get("url", "")
-            lang_note = " (EN + FR)" if fr_data else " (EN only)"
-            results.append(f"Created (as draft): *{new_article_plan['title']}*{lang_note}\n   {new_url}")
+            lang_note = "EN + FR" if fr_data else "EN only"
+            results.append({
+                "kind": "created",
+                "title": new_article_plan["title"],
+                "url": new_url,
+                "lang_note": lang_note,
+                "items": [],
+            })
 
         except Exception as e:
             log.error(f"Failed to create new article: {e}")
-            results.append(f"FAILED to create new article: {e}")
+            results.append({
+                "kind": "failed_create",
+                "title": new_article_plan.get("title", "(new article)"),
+                "url": "",
+                "items": [],
+                "error": str(e),
+            })
 
-    # Format response
+    return format_apply_report(results)
+
+
+def format_apply_report(results):
+    """Render the post-apply git-diff-style report as Slack mrkdwn."""
     if not results:
         return "No changes were applied."
 
-    summary = "*Changes applied:*\n\n" + "\n\n".join(results)
-    summary += "\n\nAll updates are live. New articles are saved as drafts — publish them when ready."
-    return summary
+    updated = [r for r in results if r["kind"] == "updated"]
+    created = [r for r in results if r["kind"] == "created"]
+    skipped = [r for r in results if r["kind"] == "skipped"]
+    failed = [r for r in results if r["kind"] in ("failed", "failed_create")]
+
+    parts = ["*Changes applied:*\n"]
+
+    def render_item_bullets(items):
+        lines = []
+        for ch in items or []:
+            typ = str(ch.get("type", "UPDATE")).upper()
+            sec = (ch.get("section") or "").strip()
+            if sec:
+                lines.append(f'    • [{typ}] {sec}')
+            else:
+                lines.append(f'    • [{typ}]')
+        return lines
+
+    if updated:
+        parts.append(f"*Articles updated ({len(updated)}):*")
+        for r in updated:
+            parts.append(f"*{r['title']}* — updated ({r.get('lang_note', '')})")
+            if r.get("url"):
+                parts.append(f"    {r['url']}")
+            parts.extend(render_item_bullets(r.get("items")))
+            parts.append("")
+
+    if created:
+        parts.append(f"*New articles created and published ({len(created)}):*")
+        for r in created:
+            parts.append(f"*{r['title']}* — created and published ({r.get('lang_note', '')})")
+            if r.get("url"):
+                parts.append(f"    {r['url']}")
+            parts.append("")
+
+    if skipped:
+        parts.append(f"*Skipped ({len(skipped)}):*")
+        for r in skipped:
+            parts.append(f"*{r['title']}* — skipped: {r.get('error', '')}")
+        parts.append("")
+
+    if failed:
+        parts.append(f"*Failed ({len(failed)}):*")
+        for r in failed:
+            parts.append(f"*{r['title']}* — failed: {r.get('error', '')}")
+        parts.append("")
+
+    parts.append("All updates are live in Intercom.")
+    return "\n".join(parts).rstrip()
