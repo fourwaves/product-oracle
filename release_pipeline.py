@@ -210,35 +210,46 @@ def run(target_date=None):
         title = opportunity_title(opp)
         page_url = notion_page_url(opp_id)
 
-        if opp_id in pipeline_log:
-            prior = pipeline_log[opp_id].get("date", "?")
-            log.info(f"  Skipping '{title}' — already processed on {prior}.")
-            continue
-
         log.info(f"Processing '{title}' ({opp_id})...")
-        entry = {
+        entry = pipeline_log.get(opp_id, {
             "title": title,
             "release_date": target_iso,
-            "skills_triggered": [],
-            "date": datetime.now().isoformat(),
-        }
+            "skills": {},
+        })
+        # Migrate any pre-existing entry written by an older release_pipeline
+        # version (flat "skills_triggered" list) to the per-skill dict shape.
+        if "skills" not in entry:
+            old = entry.get("skills_triggered", [])
+            entry["skills"] = {s: {"date": entry.get("date", "")} for s in old}
+            if "kb_update_thread_ts" in entry and "kb_update" in entry["skills"]:
+                entry["skills"]["kb_update"]["thread_ts"] = entry["kb_update_thread_ts"]
 
-        try:
-            parent_ts = trigger_kb_update(title, page_url)
-            entry["skills_triggered"].append("kb_update")
-            entry["kb_update_thread_ts"] = parent_ts
-            log.info(f"  kb_update done. Thread ts={parent_ts}")
-        except Exception as e:
-            log.error(f"  kb_update failed for '{title}': {e}")
+        skills_done = entry["skills"]
 
-        notify_result = trigger_notify_upvoters(opp_id, title)
-        if notify_result is not None:
-            entry["skills_triggered"].append("notify_upvoters")
-            entry["notify_upvoters"] = {
-                "drafted": notify_result["drafted"],
-                "skipped": notify_result["skipped"],
-                "total_insights": notify_result["total_insights"],
-            }
+        if "kb_update" in skills_done:
+            log.info(f"  Skip kb_update — already triggered on {skills_done['kb_update'].get('date', '?')}.")
+        else:
+            try:
+                parent_ts = trigger_kb_update(title, page_url)
+                skills_done["kb_update"] = {
+                    "date": datetime.now().isoformat(),
+                    "thread_ts": parent_ts,
+                }
+                log.info(f"  kb_update done. Thread ts={parent_ts}")
+            except Exception as e:
+                log.error(f"  kb_update failed for '{title}': {e}")
+
+        if "notify_upvoters" in skills_done:
+            log.info(f"  Skip notify_upvoters — already triggered on {skills_done['notify_upvoters'].get('date', '?')}.")
+        else:
+            notify_result = trigger_notify_upvoters(opp_id, title)
+            if notify_result is not None:
+                skills_done["notify_upvoters"] = {
+                    "date": datetime.now().isoformat(),
+                    "drafted": notify_result["drafted"],
+                    "skipped": notify_result["skipped"],
+                    "total_insights": notify_result["total_insights"],
+                }
 
         pipeline_log[opp_id] = entry
         save_pipeline_log(pipeline_log)
