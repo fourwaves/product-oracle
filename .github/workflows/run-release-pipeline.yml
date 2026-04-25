@@ -1,0 +1,59 @@
+name: Run Release Pipeline
+
+on:
+  schedule:
+    # Daily at 13:00 UTC (09:00 ET) — well after midnight UTC so "yesterday"
+    # is fully settled and any late-day Release date edits are picked up.
+    - cron: '0 13 * * *'
+  workflow_dispatch:
+    inputs:
+      date:
+        description: 'ISO date to scan (default: yesterday)'
+        required: false
+        default: ''
+
+# Share the polling group so this never runs concurrently with oracle.py —
+# both write to oracle_processed_messages.json.
+concurrency:
+  group: product-oracle
+  cancel-in-progress: false
+
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run release pipeline
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          ORACLE_CHANNEL_ID: ${{ secrets.ORACLE_CHANNEL_ID }}
+          INTERCOM_TOKEN: ${{ secrets.INTERCOM_TOKEN }}
+        run: |
+          if [ -n "${{ github.event.inputs.date }}" ]; then
+            python release_pipeline.py --date "${{ github.event.inputs.date }}"
+          else
+            python release_pipeline.py
+          fi
+
+      - name: Commit logs
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add release_pipeline_log.json oracle_processed_messages.json
+          if ! git diff --cached --quiet; then
+            git commit -m "Release pipeline: update logs"
+            git pull --rebase origin main || true
+            git push || true
+          fi
