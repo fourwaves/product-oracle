@@ -44,6 +44,7 @@ from oracle import (
     slack_post_message,
 )
 from skills.kb_update import handle_kb_update
+from skills.notify_upvoters import handle_notify_upvoters
 
 load_dotenv()
 
@@ -127,6 +128,23 @@ def save_pipeline_log(data):
 # Skill triggers
 # ---------------------------------------------------------------------------
 
+def trigger_notify_upvoters(opp_id, title):
+    """Draft Gmail notifications for upvoters of this opportunity. Returns the
+    handle_notify_upvoters result dict, or None on failure (logged).
+    """
+    log.info(f"Drafting upvoter notifications for '{title}'...")
+    try:
+        result = handle_notify_upvoters(opp_id, call_llm)
+        log.info(
+            f"  notify_upvoters: drafted={result['drafted']} "
+            f"skipped={result['skipped']} of {result['total_insights']} insight(s)."
+        )
+        return result
+    except Exception as e:
+        log.error(f"  notify_upvoters failed for '{title}': {e}")
+        return None
+
+
 def trigger_kb_update(title, page_url):
     """Post the parent notification + kb_update suggestions in a thread, and
     register the thread for follow-up handling. Returns the parent thread ts.
@@ -198,19 +216,32 @@ def run(target_date=None):
             continue
 
         log.info(f"Processing '{title}' ({opp_id})...")
+        entry = {
+            "title": title,
+            "release_date": target_iso,
+            "skills_triggered": [],
+            "date": datetime.now().isoformat(),
+        }
+
         try:
             parent_ts = trigger_kb_update(title, page_url)
-            pipeline_log[opp_id] = {
-                "title": title,
-                "release_date": target_iso,
-                "skills_triggered": ["kb_update"],
-                "kb_update_thread_ts": parent_ts,
-                "date": datetime.now().isoformat(),
-            }
-            save_pipeline_log(pipeline_log)
-            log.info(f"  Done. Thread ts={parent_ts}")
+            entry["skills_triggered"].append("kb_update")
+            entry["kb_update_thread_ts"] = parent_ts
+            log.info(f"  kb_update done. Thread ts={parent_ts}")
         except Exception as e:
-            log.error(f"  Failed for '{title}': {e}")
+            log.error(f"  kb_update failed for '{title}': {e}")
+
+        notify_result = trigger_notify_upvoters(opp_id, title)
+        if notify_result is not None:
+            entry["skills_triggered"].append("notify_upvoters")
+            entry["notify_upvoters"] = {
+                "drafted": notify_result["drafted"],
+                "skipped": notify_result["skipped"],
+                "total_insights": notify_result["total_insights"],
+            }
+
+        pipeline_log[opp_id] = entry
+        save_pipeline_log(pipeline_log)
 
 
 def main():

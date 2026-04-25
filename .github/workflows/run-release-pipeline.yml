@@ -33,6 +33,17 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Write Gmail OAuth token
+        env:
+          GMAIL_TOKEN_JSON: ${{ secrets.GMAIL_TOKEN_JSON }}
+        run: |
+          if [ -n "$GMAIL_TOKEN_JSON" ]; then
+            echo "$GMAIL_TOKEN_JSON" > gmail_token.json
+          else
+            echo "ERROR: GMAIL_TOKEN_JSON secret not set."
+            exit 1
+          fi
+
       - name: Run release pipeline
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
@@ -51,7 +62,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add release_pipeline_log.json oracle_processed_messages.json
+          git add release_pipeline_log.json oracle_processed_messages.json notify_upvoters_log.json
           if ! git diff --cached --quiet; then
             git commit -m "Release pipeline: update logs"
             git pull --rebase origin main || true
